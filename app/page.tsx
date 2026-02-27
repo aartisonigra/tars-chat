@@ -147,31 +147,64 @@ export default function Dashboard() {
     }
   };
 
+  // --- 🔥 FIXED ZEGO CALL LOGIC FOR VERCEL & LOCALHOST ---
   const startZegoCall = async (isVideo: boolean) => {
     if (!currentUser || !convId) return;
+    
     const rawAppID = process.env.NEXT_PUBLIC_ZEGO_APP_ID;
     const serverSecret = process.env.NEXT_PUBLIC_ZEGO_SERVER_SECRET;
+
+    if (!rawAppID || !serverSecret) {
+      alert("Config Error: ZegoCloud keys not found! Check your .env or Vercel settings.");
+      return;
+    }
+
     setIsZegoCalling(true);
     
+    // 1000ms delay to let the modal render first
     setTimeout(async () => {
-      const { ZegoUIKitPrebuilt } = await import('@zegocloud/zego-uikit-prebuilt');
-      const kitToken = ZegoUIKitPrebuilt.generateKitTokenForTest(
-        Number(rawAppID), 
-        serverSecret!, 
-        convId.toString(), 
-        String(currentUser._id), 
-        currentUser.name || "User"
-      );
-      const zp = ZegoUIKitPrebuilt.create(kitToken);
-      zpRef.current = zp;
-      zp.joinRoom({
-        container: videoContainerRef.current,
-        scenario: { mode: selectedChat.isGroup ? ZegoUIKitPrebuilt.GroupCall : ZegoUIKitPrebuilt.OneONoneCall },
-        showPreJoinView: false,
-        turnOnCameraWhenJoining: isVideo,
-        onLeaveRoom: () => setIsZegoCalling(false),
-      });
-    }, 500);
+      if (!videoContainerRef.current) {
+        console.error("DOM Error: videoContainerRef is null");
+        setIsZegoCalling(false);
+        return;
+      }
+
+      try {
+        // Dynamic import to avoid SSR errors
+        const { ZegoUIKitPrebuilt } = await import('@zegocloud/zego-uikit-prebuilt');
+        
+        const kitToken = ZegoUIKitPrebuilt.generateKitTokenForTest(
+          Number(rawAppID), 
+          serverSecret, 
+          convId.toString(), 
+          String(currentUser._id), 
+          currentUser.name || "User"
+        );
+
+        const zp = ZegoUIKitPrebuilt.create(kitToken);
+        zpRef.current = zp;
+        
+        zp.joinRoom({
+          container: videoContainerRef.current,
+          scenario: { 
+            mode: selectedChat.isGroup ? ZegoUIKitPrebuilt.GroupCall : ZegoUIKitPrebuilt.OneONoneCall 
+          },
+          showPreJoinView: false,
+          turnOnCameraWhenJoining: isVideo,
+          turnOnMicrophoneWhenJoining: true,
+          showMyCameraToggleButton: true,
+          showMyMicrophoneToggleButton: true,
+          showAudioVideoSettingsButton: true,
+          onLeaveRoom: () => {
+            setIsZegoCalling(false);
+            if (zpRef.current) zpRef.current.destroy();
+          },
+        });
+      } catch (err) {
+        console.error("Zego Crash:", err);
+        setIsZegoCalling(false);
+      }
+    }, 1000); 
   };
 
   // --- UI Renders ---
@@ -184,7 +217,6 @@ export default function Dashboard() {
     );
   }
 
-  // --- AUTH PAGE (SIGN IN / SIGN UP) ---
   if (!isAuthenticated) {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-[#050505] gap-8 p-4">
@@ -202,27 +234,17 @@ export default function Dashboard() {
             )}
           </div>
 
-          {clerkView === "sign-in" ? (
-            <button 
-              onClick={() => setClerkView("sign-up")} 
-              className="text-blue-600 font-black uppercase text-[12px] tracking-widest hover:text-blue-400 transition-all"
-            >
-              DON'T HAVE AN ACCOUNT? SIGN UP
-            </button>
-          ) : (
-            <button 
-              onClick={() => setClerkView("sign-in")} 
-              className="text-blue-600 font-black uppercase text-[12px] tracking-widest hover:text-blue-400 transition-all"
-            >
-              ALREADY HAVE AN ACCOUNT? SIGN IN
-            </button>
-          )}
+          <button 
+            onClick={() => setClerkView(clerkView === "sign-in" ? "sign-up" : "sign-in")} 
+            className="text-blue-600 font-black uppercase text-[12px] tracking-widest hover:text-blue-400 transition-all"
+          >
+            {clerkView === "sign-in" ? "DON'T HAVE AN ACCOUNT? SIGN UP" : "ALREADY HAVE AN ACCOUNT? SIGN IN"}
+          </button>
         </div>
       </div>
     );
   }
 
-  // --- MAIN DASHBOARD UI ---
   return (
     <div className="flex h-screen bg-[#050505] text-gray-200 md:p-4 gap-4 overflow-hidden font-sans">
       
@@ -271,13 +293,13 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* MODAL: ZEGO CALL */}
+      {/* 🔥 MODAL: ZEGO CALL (FIXED HEIGHT) */}
       {isZegoCalling && (
-        <div className="fixed inset-0 z-[600] bg-black flex items-center justify-center">
-          <div ref={videoContainerRef} className="w-full h-full" />
+        <div className="fixed inset-0 z-[600] bg-black flex flex-col items-center justify-center">
+          <div ref={videoContainerRef} className="w-full h-full" style={{ minHeight: '100vh' }} />
           <button 
             onClick={() => { zpRef.current?.destroy(); setIsZegoCalling(false); }} 
-            className="absolute top-10 right-10 z-[650] bg-red-600 px-8 py-3 rounded-full text-[10px] font-black hover:bg-red-700"
+            className="absolute top-10 right-10 z-[650] bg-red-600 px-8 py-3 rounded-full text-[10px] font-black hover:bg-red-700 shadow-2xl"
           >
             DISCONNECT
           </button>
@@ -312,7 +334,6 @@ export default function Dashboard() {
               className={`flex items-center gap-5 p-5 rounded-[32px] cursor-pointer transition-all ${convId === conv._id ? "bg-blue-600 text-white shadow-lg" : "hover:bg-white/[0.03]"}`}
             >
               <div className="relative w-16 h-16 rounded-[22px] bg-white/5 overflow-hidden border border-white/5">
-                {/* UPDATED: Profile Avatar Logic in Sidebar */}
                 {conv.otherUser?.image ? (
                   <img src={conv.otherUser.image} className="w-full h-full object-cover" alt="" />
                 ) : (
@@ -342,7 +363,6 @@ export default function Dashboard() {
               <div className="flex items-center gap-6">
                 <button onClick={() => setMobileChatActive(false)} className="md:hidden text-blue-500 text-4xl">‹</button>
                 <div className="w-16 h-16 rounded-3xl overflow-hidden bg-white/5 flex items-center justify-center text-3xl font-black text-white">
-                  {/* UPDATED: Header Profile logic */}
                    {selectedChat.otherUser?.image ? (
                      <img src={selectedChat.otherUser.image} className="w-full h-full object-cover" alt="" />
                    ) : (
@@ -376,11 +396,9 @@ export default function Dashboard() {
                 const uniqueEmojis = Array.from(new Set(reactions.map((r: any) => r.emoji)));
 
                 return (
-                  /* UPDATED: Message Layout with Profile Avatar next to messages */
                   <div key={msg._id} className={`flex w-full ${isMe ? "justify-end" : "justify-start"}`}>
                     <div className={`flex items-end gap-3 max-w-[85%] ${isMe ? "flex-row-reverse" : "flex-row"}`}>
                       
-                      {/* Message Sender Avatar */}
                       <div className="flex-shrink-0 w-8 h-8 rounded-full overflow-hidden bg-white/10 border border-white/5 flex items-center justify-center text-[10px] font-black uppercase text-white">
                         {isMe ? (
                            currentUser?.image ? <img src={currentUser.image} className="w-full h-full object-cover" alt="Me" /> : currentUser?.name?.charAt(0) || "ME"
@@ -520,11 +538,7 @@ export default function Dashboard() {
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(37, 99, 235, 0.2); border-radius: 10px; }
         .custom-audio-player { filter: invert(1) hue-rotate(180deg) brightness(1.5); }
-        
-        .clerk-clean-mode .cl-footer {
-          display: none !important;
-        }
-
+        .clerk-clean-mode .cl-footer { display: none !important; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
       `}</style>
     </div>
