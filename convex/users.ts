@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 
 /**
- * ૧. ફાઈલ (Image, Voice, etc.) અપલોડ કરવા માટે URL જનરેટ કરવા
+ * ૧. ફાઈલ અપલોડ URL જનરેટ કરવા
  */
 export const generateUploadUrl = mutation(async (ctx) => {
   return await ctx.storage.generateUploadUrl();
@@ -17,7 +17,6 @@ export const storeUser = mutation({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) return null;
 
-    // ચેક કરો કે યુઝર પહેલાથી છે કે નહીં
     const user = await ctx.db
       .query("users")
       .withIndex("by_token", (q) => q.eq("tokenIdentifier", identity.tokenIdentifier))
@@ -28,7 +27,6 @@ export const storeUser = mutation({
       : (identity.name || "Anonymous User");
 
     if (user !== null) {
-      // જો યુઝર હોય તો ફક્ત Online Status અપડેટ કરો
       await ctx.db.patch(user._id, {
         isOnline: true,
         lastSeen: Date.now(),
@@ -36,7 +34,6 @@ export const storeUser = mutation({
       return user._id;
     }
 
-    // નવો યુઝર બનાવો
     return await ctx.db.insert("users", {
       name: userName,
       email: identity.email ?? "Unknown",
@@ -45,13 +42,13 @@ export const storeUser = mutation({
       tokenIdentifier: identity.tokenIdentifier,
       isOnline: true,
       lastSeen: Date.now(),
-      about: "Operational", // Default Status
+      about: "Operational",
     });
   },
 });
 
 /**
- * ૩. પ્રોફાઈલ એડિટ કરવા (નામ, ફોન અને ઈમેજ)
+ * ૩. પ્રોફાઈલ એડિટ કરવા
  */
 export const updateProfile = mutation({
   args: {
@@ -72,7 +69,6 @@ export const updateProfile = mutation({
 
     let imageUrl = user.image;
     if (args.storageId) {
-      // જો નવી ઈમેજ અપલોડ કરી હોય તો તેની URL મેળવો
       const url = await ctx.storage.getUrl(args.storageId);
       if (url) imageUrl = url;
     }
@@ -132,7 +128,7 @@ export const setTypingStatus = mutation({
 });
 
 /**
- * ૬. બધા યુઝર્સનું લિસ્ટ (Real-time Typing indicator સાથે)
+ * ૬. બધા યુઝર્સનું લિસ્ટ
  */
 export const listAllUsers = query({
   args: { search: v.string() },
@@ -148,13 +144,13 @@ export const listAllUsers = query({
     const users = await ctx.db.query("users").collect();
     
     const filteredUsers = users.filter((u) => 
-      u._id !== currentUser?._id && // પોતાનું નામ લિસ્ટમાં ન બતાવવું
+      u._id !== currentUser?._id && 
       (u.name ?? "").toLowerCase().includes(args.search.toLowerCase())
     );
 
     return filteredUsers.map((u) => ({
       ...u,
-      isTypingMe: u.typingTo === currentUser?._id, // ચેક કરો કે સામે વાળો મને ટાઈપ કરે છે?
+      isTypingMe: u.typingTo === currentUser?._id,
     }));
   },
 });

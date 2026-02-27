@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 
 /**
- * ૧. બે યુઝર વચ્ચે પર્સનલ ચેટ મેળવો અથવા નવી બનાવો
+ * ૧. પર્સનલ ચેટ મેળવો અથવા નવી બનાવો (Self Message સપોર્ટ સાથે)
  */
 export const getOrCreate = mutation({
   args: { otherUserId: v.id("users") },
@@ -17,35 +17,27 @@ export const getOrCreate = mutation({
 
     if (!currentUser) throw new Error("Current user not found");
 
-    // જો ભૂલથી પોતાની સાથે જ ચેટ કરવાની ટ્રાય કરે તો અટકાવો
-    if (currentUser._id === otherUserId) throw new Error("Cannot chat with yourself");
+    const allConversations = await ctx.db
+      .query("conversations")
+      .filter((q) => q.eq(q.field("isGroup"), false))
+      .collect();
 
-    const allConversations = await ctx.db.query("conversations").collect();
-    
-    // પર્સનલ ચેટ શોધો
-    const existing = allConversations.find(conv => {
-      if (conv.isGroup) return false;
-      
-      const participants = conv.participants || [];
-      const p1 = (conv as any).participantOne;
-      const p2 = (conv as any).participantTwo;
-
-      // નવા array લોજિક અથવા જૂના field લોજિક બંનેથી ચેક કરો
-      const matchInArray = participants.includes(currentUser._id) && participants.includes(otherUserId);
-      const matchInFields = (p1 === currentUser._id && p2 === otherUserId) || (p1 === otherUserId && p2 === currentUser._id);
-      
-      return matchInArray || matchInFields;
+    const existing = allConversations.find((conv) => {
+      const p = conv.participants || [];
+      if (currentUser._id === otherUserId) {
+        return p.length === 2 && p[0] === currentUser._id && p[1] === currentUser._id;
+      }
+      return p.includes(currentUser._id) && p.includes(otherUserId);
     });
 
     if (existing) return existing._id;
 
-    // નવી પર્સનલ ચેટ બનાવો
     return await ctx.db.insert("conversations", {
       participants: [currentUser._id, otherUserId],
       isGroup: false,
-      participantOne: currentUser._id, 
+      participantOne: currentUser._id,
       participantTwo: otherUserId,
-      lastMessage: "Secure link established",
+      lastMessage: currentUser._id === otherUserId ? "Notes to self" : "Secure link established",
       lastMessageTime: Date.now(),
     });
   },
@@ -70,7 +62,7 @@ export const createGroup = mutation({
 
     if (!currentUser) throw new Error("User not found");
 
-    const allMembers = [...new Set([...args.memberIds, currentUser._id])];
+    const allMembers = Array.from(new Set([...args.memberIds, currentUser._id]));
 
     return await ctx.db.insert("conversations", {
       name: args.name,
@@ -84,7 +76,7 @@ export const createGroup = mutation({
 });
 
 /**
- * ૩. ચેટ લિસ્ટ (Sidebar) મેળવો
+ * ૩. ચેટ લિસ્ટ (Sidebar) મેળવો - Image Fix સાથે
  */
 export const list = query({
   args: {},
@@ -101,72 +93,61 @@ export const list = query({
 
     const conversations = await ctx.db.query("conversations").collect();
 
-    // ફિલ્ટર: યુઝર જે ચેટનો ભાગ હોય તે જ બતાવો
-    const myConversations = conversations.filter(conv => {
-      const participants = conv.participants || [];
-      return participants.includes(currentUser._id) || 
-             (conv as any).participantOne === currentUser._id || 
-             (conv as any).participantTwo === currentUser._id;
-    });
+    const myConversations = conversations.filter((conv) =>
+      conv.participants?.includes(currentUser._id)
+    );
 
     const results = await Promise.all(
       myConversations.map(async (conv) => {
-        // --- જો ગ્રુપ ચેટ હોય તો ---
+        // --- ગ્રુપ ચેટ માટે ---
         if (conv.isGroup) {
           return {
             ...conv,
             otherUser: {
+              _id: conv._id,
               name: conv.name || "Unnamed Fleet",
+              // ગ્રુપ માટે અલગ ડિફોલ્ટ આઇકોન
               image: conv.groupImage || "https://cdn-icons-png.flaticon.com/512/6387/6387947.png",
               isGroup: true,
-              memberCount: conv.participants?.length || 0
-            }
-          };
-        }
-
-        // --- જો પર્સનલ ચેટ હોય તો ---
-        let otherUserId;
-        if (conv.participants) {
-          otherUserId = conv.participants.find(id => id !== currentUser._id);
-        } else {
-          otherUserId = (conv as any).participantOne === currentUser._id 
-            ? (conv as any).participantTwo 
-            : (conv as any).participantOne;
-        }
-
-        const otherUserDoc = otherUserId ? await ctx.db.get(otherUserId) : null;
-
-        if (otherUserDoc) {
-          // TypeScript ની એરર રોકવા માટે અહીં 'user' ને any તરીકે લીધો છે
-          const user = otherUserDoc as any;
-          return {
-            ...conv,
-            otherUser: {
-              _id: user._id,
-              name: user.name || "Signal Detected",
-              image: user.image,
-              isOnline: user.isOnline ?? false,
-              lastSeen: user.lastSeen,
-              isGroup: false
+              memberCount: conv.participants?.length || 0,
             },
           };
         }
 
-        // જો સામેવાળો યુઝર ન મળે (Deleted User case)
+        // --- પર્સનલ ચેટ માટે ---
+        const isSelf = conv.participantOne === conv.participantTwo;
+        let otherUserDoc = null;
+
+        if (isSelf) {
+          otherUserDoc = currentUser; 
+        } else {
+          // સામેવાળા યુઝરને શોધો
+          const otherUserId = conv.participants?.find((id) => id !== currentUser._id);
+          otherUserDoc = otherUserId ? await ctx.db.get(otherUserId) : null;
+        }
+
         return {
           ...conv,
-          otherUser: {
-            _id: otherUserId,
-            name: "Deleted Entity",
-            image: undefined,
-            isOnline: false,
-            isGroup: false
-          },
+          otherUser: otherUserDoc
+            ? {
+                _id: otherUserDoc._id,
+                name: isSelf ? "My Space (You)" : (otherUserDoc.name || "Signal Detected"),
+                // અહીં જાદુ છે: જો યુઝર પાસે ઈમેજ હોય તો એ જ બતાવો, નહીંતર ડિફોલ્ટ અવતાર
+                image: otherUserDoc.image || "https://cdn-icons-png.flaticon.com/512/149/149071.png",
+                isOnline: otherUserDoc.isOnline ?? false,
+                isGroup: false,
+              }
+            : {
+                _id: isSelf ? currentUser._id : (conv.participantTwo || conv._id),
+                name: "Unknown Entity",
+                image: "https://cdn-icons-png.flaticon.com/512/149/149071.png",
+                isOnline: false,
+                isGroup: false,
+              },
         };
       })
     );
 
-    // લેટેસ્ટ મેસેજ પ્રમાણે સોર્ટિંગ કરો (નવો મેસેજ ઉપર આવે)
     return results.sort((a, b) => (b.lastMessageTime || 0) - (a.lastMessageTime || 0));
   },
 });
