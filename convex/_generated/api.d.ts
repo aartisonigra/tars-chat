@@ -8,8 +8,13 @@
  * @module
  */
 
+import type * as analytics from "../analytics.js";
 import type * as conversations from "../conversations.js";
+import type * as crm from "../crm.js";
+import type * as links from "../links.js";
 import type * as messages from "../messages.js";
+import type * as productivity from "../productivity.js";
+import type * as studyHub from "../studyHub.js";
 import type * as users from "../users.js";
 
 import type {
@@ -19,8 +24,13 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  analytics: typeof analytics;
   conversations: typeof conversations;
+  crm: typeof crm;
+  links: typeof links;
   messages: typeof messages;
+  productivity: typeof productivity;
+  studyHub: typeof studyHub;
   users: typeof users;
 }>;
 

@@ -2,14 +2,14 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 
 /**
- * ૧. ફાઈલ અપલોડ URL જનરેટ કરવા
+ * ૧. ફાઈલ અપલોડ URL જનરેટ કરવા (Images, Audio, Files માટે)
  */
 export const generateUploadUrl = mutation(async (ctx) => {
   return await ctx.storage.generateUploadUrl();
 });
 
 /**
- * ૨. મેસેજ મોકલવા માટે
+ * ૨. મેસેજ મોકલવા માટે (Supports Text, Images, Audio, Files & Replies)
  */
 export const send = mutation({
   args: {
@@ -56,8 +56,10 @@ export const send = mutation({
       replyToId: args.replyToId,
       isRead: false,
       reactions: [], 
+      isDeleted: false,
     });
 
+    // Conversation ટેબલમાં છેલ્લો મેસેજ અપડેટ કરવા માટેનું લોજિક
     let lastMsgText = args.body;
     if (args.format === "image") lastMsgText = "📷 Photo";
     else if (args.format === "audio") lastMsgText = "🎤 Voice Message";
@@ -73,8 +75,7 @@ export const send = mutation({
 });
 
 /**
- * ૩. MESSAGE REACTIONS (Cleaned & Improved) 🚀
- * આ ફંક્શન ખાતરી કરે છે કે ડેટાબેઝમાં સ્કીમા મુજબ જ ડેટા સેવ થાય.
+ * ૩. MESSAGE REACTIONS (Toggle Logic) 🚀
  */
 export const addReaction = mutation({
   args: { messageId: v.id("messages"), emoji: v.string() },
@@ -92,7 +93,7 @@ export const addReaction = mutation({
     const message = await ctx.db.get(args.messageId);
     if (!message) return;
 
-    // ૧. જૂના ડેટાને ફિલ્ટર કરો જેથી એરર ન આવે
+    // જૂના ડેટાને ફિલ્ટર કરો જેથી એરર ન આવે
     let rawReactions = Array.isArray(message.reactions) ? message.reactions : [];
     
     // માત્ર સાચા Object ફોર્મેટ {userId, emoji} જ રાખો
@@ -100,24 +101,23 @@ export const addReaction = mutation({
       (r: any) => typeof r === "object" && r !== null && r.userId && r.emoji
     );
 
-    // ૨. Toggle Logic
+    // Toggle Logic: જો સેમ યુઝરે સેમ ઇમોજી આપ્યો હોય તો કાઢી નાખો, નહીતર નવો ઉમેરો
     const existingIndex = reactions.findIndex(
       (r) => r.userId === user._id && r.emoji === args.emoji
     );
 
     if (existingIndex > -1) {
-      reactions.splice(existingIndex, 1); // કાઢી નાખો
+      reactions.splice(existingIndex, 1); 
     } else {
-      reactions.push({ userId: user._id, emoji: args.emoji }); // ઉમેરો
+      reactions.push({ userId: user._id, emoji: args.emoji }); 
     }
 
-    // ૩. અપડેટ
     await ctx.db.patch(args.messageId, { reactions });
   },
 });
 
 /**
- * ૪. મેસેજ લિસ્ટ મેળવવા (With Cleanup)
+ * ૪. મેસેજ લિસ્ટ મેળવવા (With User details and Reply Sender Names)
  */
 export const list = query({
   args: { conversationId: v.id("conversations") },
@@ -135,14 +135,16 @@ export const list = query({
         if (msg.replyToId) {
           const originalMsg = await ctx.db.get(msg.replyToId);
           if (originalMsg) {
+            // ઓરિજિનલ મેસેજ મોકલનારનું નામ પણ ડેટાબેઝમાંથી સાથે જ લઈ લઈએ
+            const originalSender = await ctx.db.get(originalMsg.senderId);
             replyToData = {
-              body: originalMsg.body,
+              body: originalMsg.isDeleted ? "This message was deleted" : originalMsg.body,
               senderId: originalMsg.senderId,
+              senderName: originalSender?.name || "User", // ફ્રન્ટએન્ડ લેઆઉટ માટે ફિક્સ
             };
           }
         }
         
-        // ફ્રન્ટએન્ડ માટે ક્લીન રિએક્શન લિસ્ટ
         const cleanReactions = Array.isArray(msg.reactions) 
           ? msg.reactions.filter((r: any) => typeof r === "object" && r !== null) 
           : [];
@@ -150,6 +152,7 @@ export const list = query({
         return {
           ...msg,
           isRead: msg.isRead ?? false,
+          isDeleted: msg.isDeleted ?? false,
           senderName: sender?.name || "User",
           senderImage: sender?.image,
           reactions: cleanReactions, 
@@ -161,7 +164,7 @@ export const list = query({
 });
 
 /**
- * ૫. મેસેજ Read માર્ક કરવા
+ * ૫. મેસેજ Read માર્ક કરવા (જ્યારે સામેવાળો યુઝર ચેટ ઓપન કરે)
  */
 export const markAsRead = mutation({
   args: { conversationId: v.id("conversations") },
@@ -180,8 +183,8 @@ export const markAsRead = mutation({
       .query("messages")
       .withIndex("by_conversation", (q) => q.eq("conversationId", args.conversationId))
       .filter((q) => q.and(
-        q.eq(q.field("isRead"), false),
-        q.neq(q.field("senderId"), user._id)
+        q.neq(q.field("isRead"), true), // Safe check: જો true ના હોય એ બધા (false અથવા undefined)
+        q.neq(q.field("senderId"), user._id) // પોતાનો મેસેજ પોતે જ read ન કરી શકે
       ))
       .collect();
 
@@ -192,7 +195,7 @@ export const markAsRead = mutation({
 });
 
 /**
- * ૬. મેસેજ ડીલીટ કરવા
+ * ૬. મેસેજ ડીલીટ કરવા (Soft Delete જેથી ચેટ લેઆઉટ બગડે નહીં)
  */
 export const deleteMessage = mutation({
   args: { messageId: v.id("messages") },
@@ -208,12 +211,24 @@ export const deleteMessage = mutation({
       .withIndex("by_token", (q) => q.eq("tokenIdentifier", identity.tokenIdentifier))
       .unique();
 
+    // માત્ર મેસેજ મોકલનાર જ ડીલીટ કરી શકે
     if (user && message.senderId === user._id) {
+      // જો ક્લાઉડ સ્ટોરેજમાં ફાઈલો હોય તો એને ખાલી કરી નાખો મેમરી બચાવવા
       if (message.imageId) await ctx.storage.delete(message.imageId);
       if (message.audioId) await ctx.storage.delete(message.audioId);
       if (message.fileId) await ctx.storage.delete(message.fileId); 
       
-      await ctx.db.delete(args.messageId);
+      // સાચો રસ્તો: Soft delete કરો અને બોડી ટેક્સ્ટ અપડેટ કરી દો
+      await ctx.db.patch(args.messageId, {
+        body: "Message was deleted",
+        isDeleted: true,
+        format: "text",
+        fileUrl: undefined,
+        imageId: undefined,
+        audioId: undefined,
+        fileId: undefined,
+        reactions: [] // રીએક્શન્સ પણ ક્લીન કરી દો
+      });
     }
   },
 });
