@@ -374,6 +374,21 @@ export default function Dashboard() {
 
   const startZegoCall = async (isVideo: boolean) => {
     if (!currentUser || !convId) return;
+
+
+    // TEMP SAFE GUARD:
+    // NEXT_PUBLIC server secret client me nahi hona chahiye.
+    // Isliye ab client-side token generation disable kar rahe hain.
+    // Proper fix: server/Convex function se token generate karke yahan return karna.
+    const rawAppID = process.env.NEXT_PUBLIC_ZEGO_APP_ID;
+    if (!rawAppID) {
+      alert("Config Error: NEXT_PUBLIC_ZEGO_APP_ID not found.");
+      return;
+    }
+
+    alert("Zego call is temporarily disabled. Token must be generated server-side (ZEGO_SERVER_SECRET)." );
+    return;
+
     const parsedAppID = 698432055;
     const serverSecret = "7409a4e3c42602f02d80c1353d958400";
     setIsZegoCalling(true);
@@ -403,6 +418,7 @@ export default function Dashboard() {
         });
       } catch (err) { setIsZegoCalling(false); }
     }, 800); 
+
   };
 
   if (isLoading) {
