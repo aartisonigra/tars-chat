@@ -150,61 +150,19 @@ export default function Dashboard() {
   // --- 🔥 FIXED ZEGO CALL LOGIC FOR VERCEL & LOCALHOST ---
   const startZegoCall = async (isVideo: boolean) => {
     if (!currentUser || !convId) return;
-    
-    const rawAppID = process.env.NEXT_PUBLIC_ZEGO_APP_ID;
-    const serverSecret = process.env.NEXT_PUBLIC_ZEGO_SERVER_SECRET;
 
-    if (!rawAppID || !serverSecret) {
-      alert("Config Error: ZegoCloud keys not found! Check your .env or Vercel settings.");
+    // TEMP SAFE GUARD:
+    // NEXT_PUBLIC server secret client me nahi hona chahiye.
+    // Isliye ab client-side token generation disable kar rahe hain.
+    // Proper fix: server/Convex function se token generate karke yahan return karna.
+    const rawAppID = process.env.NEXT_PUBLIC_ZEGO_APP_ID;
+    if (!rawAppID) {
+      alert("Config Error: NEXT_PUBLIC_ZEGO_APP_ID not found.");
       return;
     }
 
-    setIsZegoCalling(true);
-    
-    // 1000ms delay to let the modal render first
-    setTimeout(async () => {
-      if (!videoContainerRef.current) {
-        console.error("DOM Error: videoContainerRef is null");
-        setIsZegoCalling(false);
-        return;
-      }
-
-      try {
-        // Dynamic import to avoid SSR errors
-        const { ZegoUIKitPrebuilt } = await import('@zegocloud/zego-uikit-prebuilt');
-        
-        const kitToken = ZegoUIKitPrebuilt.generateKitTokenForTest(
-          Number(rawAppID), 
-          serverSecret, 
-          convId.toString(), 
-          String(currentUser._id), 
-          currentUser.name || "User"
-        );
-
-        const zp = ZegoUIKitPrebuilt.create(kitToken);
-        zpRef.current = zp;
-        
-        zp.joinRoom({
-          container: videoContainerRef.current,
-          scenario: { 
-            mode: selectedChat.isGroup ? ZegoUIKitPrebuilt.GroupCall : ZegoUIKitPrebuilt.OneONoneCall 
-          },
-          showPreJoinView: false,
-          turnOnCameraWhenJoining: isVideo,
-          turnOnMicrophoneWhenJoining: true,
-          showMyCameraToggleButton: true,
-          showMyMicrophoneToggleButton: true,
-          showAudioVideoSettingsButton: true,
-          onLeaveRoom: () => {
-            setIsZegoCalling(false);
-            if (zpRef.current) zpRef.current.destroy();
-          },
-        });
-      } catch (err) {
-        console.error("Zego Crash:", err);
-        setIsZegoCalling(false);
-      }
-    }, 1000); 
+    alert("Zego call is temporarily disabled. Token must be generated server-side (ZEGO_SERVER_SECRET)." );
+    return;
   };
 
   // --- UI Renders ---
